@@ -80,6 +80,8 @@ class CosmicState(TypedDict):
     parsed_functions: List[dict]       # 解析后的功能点列表，如 [{"序号": "1", "功能点名称": "xxx", ...}]
     cosmic_output: str                 # AI Agent2 返回的 COSMIC 分解 Markdown 表格
     parsed_cosmic: List[dict]          # 解析后的 COSMIC 子过程列表
+    func_summary_output: str           # AI Agent3 返回的功能需求总结 Markdown 表格
+    parsed_func_summary: List[dict]    # 解析后的"功能需求→功能点名称"映射列表
     error: Optional[str]               # 如果出错，这里存错误信息
 
 
@@ -129,6 +131,31 @@ PROMPT_COSMIC_DECOMPOSE = """{序号}{功能点名称} :{功能点描述} .
 示例：
 |1|室分规划阶段名称绑定七级地址|室分规划任务提交时触发绑定校验|输入室分规划基本信息|E|室分规划输入数据|规划编号、室分名称、所属站点ID、规划层级、建设类型、创建时间|
 """
+# ---- 第三轮 Prompt：对功能点名称总结成 6~10 个功能需求 ----
+# 功能点名称可能有 50+ 个，需要归类总结成更上层的功能需求
+# AI 需要输出功能需求名称，以及该需求下包含的所有功能点名称列表
+PROMPT_SUMMARIZE_REQUIREMENTS = """你是一个需求分析专家。
+
+下面是一个软件项目的所有功能点名称列表（共 {count} 个功能点），请将它们总结归类为 6 到 10 个上层功能需求。
+
+要求：
+1. 将功能点按业务逻辑归类，每个功能需求下包含多个功能点
+2. 输出格式为 Markdown 表格，表头为：|功能需求|包含的功能点名称|
+3. 功能需求名称要准确概括该组功能点的共同业务目标
+4. 每个功能需求名称尽量不要重复
+5. 【重要】每个功能点的完整名称只能出现在一个功能需求中，绝对不能遗漏任何一个功能点
+6. 功能需求数量必须严格在 6 到 10 个之间
+7. 输出完毕后，请复核一遍：检查列表中的每个功能点是否都被分配到了某个功能需求中，确保 {count} 个功能点无一遗漏
+
+格式示例：
+|功能需求|包含的功能点名称|
+|数据接入|家宽历史数据接入, 资费历史数据接入, 无线投诉记录接入|
+|数据分析与标签|高频投诉标签生成, 5G低驻留标签生成, 高价值用户标签生成|
+
+功能点名称列表（共 {count} 个）：
+{function_names}
+
+请以 Markdown 表格输出。务必覆盖所有 {count} 个功能点，不能少任何一个。"""
 
 
 # =============================================================================
@@ -308,11 +335,16 @@ MOCK_FUNCTIONS_OUTPUT = """|序号|功能点名称|功能点描述|
 """
 
 MOCK_COSMIC_OUTPUT = """|序号|功能点名称|触发事件|子过程描述|数据移动类型|数据组|数据属性|
-|1|新建室分名称支持七级地址查询选择|新建室分任务提交时触发地址查询选择|输入新建室分申请信息|E|室分新建申请数据|室分名称、所属区域、建设类型、规划层级、创建人员、创建时间|
-|1|新建室分名称支持七级地址查询选择|新建室分任务提交时触发地址查询选择|读取七级地址数据库|R|七级地址编码数据|省级编码、市级编码、区级编码、街道编码、社区编码、地址详情|
-|1|新建室分名称支持七级地址查询选择|新建室分任务提交时触发地址查询选择|读取室分资源池现有列表|R|室分资源列表|室分配置、所属站点ID、设备数量、安装日期、运行状态|
-|1|新建室分名称支持七分地址查询选择|新建室分任务提交时触发地址查询选择|保存新建室分资源记录|W|新建室分资源信息|室分ID、名称、完整地址、站点归属、规划层级、创建时间戳|
-|1|新建室分名称支持七级地址查询选择|新建室分任务提交时触发地址查询选择|输出新建室分结果确认|X|室分新建结果反馈|室分编号、关联站点、地址信息、创建状态、创建时间|
+||1|新建室分名称支持七级地址查询选择|新建室分任务提交时触发地址查询选择|输入新建室分申请信息|E|室分新建申请数据|室分名称、所属区域、建设类型、规划层级、创建人员、创建时间|
+||1|新建室分名称支持七级地址查询选择|新建室分任务提交时触发地址查询选择|读取七级地址数据库|R|七级地址编码数据|省级编码、市级编码、区级编码、街道编码、社区编码、地址详情|
+||1|新建室分名称支持七级地址查询选择|新建室分任务提交时触发地址查询选择|读取室分资源池现有列表|R|室分资源列表|室分配置、所属站点ID、设备数量、安装日期、运行状态|
+||1|新建室分名称支持七分地址查询选择|新建室分任务提交时触发地址查询选择|保存新建室分资源记录|W|新建室分资源信息|室分ID、名称、完整地址、站点归属、规划层级、创建时间戳|
+||1|新建室分名称支持七级地址查询选择|新建室分任务提交时触发地址查询选择|输出新建室分结果确认|X|室分新建结果反馈|室分编号、关联站点、地址信息、创建状态、创建时间|
+"""
+
+MOCK_SUMMARY_OUTPUT = """|功能需求|包含的功能点名称|
+|室分地址管理|新建室分名称支持七级地址查询选择, 修改室分地址信息|
+|室分配置校验|删除室分配置校验|
 """
 
 
@@ -526,17 +558,75 @@ def node_parse_cosmic(state: CosmicState) -> dict:
     return {"parsed_cosmic": all_cosmic}
 
 
+def node_summarize_function_names(state: CosmicState) -> dict:
+    """
+    节点5: 第三轮 AI 调用 — 将功能点名称总结成 6~10 个功能需求
+
+    输入: state.parsed_functions（功能点列表）
+    输出: state.func_summary_output, state.parsed_func_summary
+
+    流程:
+    1. 从 parsed_functions 提取所有功能点名称
+    2. 调用 LLM 总结归类
+    3. 解析 AI 返回的 Markdown 表格
+    """
+    print("  -> AI Agent3: 总结功能需求...")
+
+    if state.get("error"):
+        return {}
+
+    functions = state.get("parsed_functions", [])
+    if not functions:
+        return {"func_summary_output": "", "parsed_func_summary": []}
+
+    # 提取所有功能点名称
+    func_names = [f.get("功能点名称", f.get("名称", "")) for f in functions]
+    func_names = [n for n in func_names if n]  # 去空
+    func_name_lines = "\n".join(func_names)
+
+    if MOCK_MODE:
+        print(f"  [Mock] 使用预置数据")
+        # 解析 Mock 总结表格
+        tables = extract_tables(MOCK_SUMMARY_OUTPUT)
+        parsed = []
+        for table in tables:
+            parsed.extend(parse_markdown_table_to_dicts(table))
+        return {"func_summary_output": MOCK_SUMMARY_OUTPUT, "parsed_func_summary": parsed}
+
+    try:
+        prompt = PROMPT_SUMMARIZE_REQUIREMENTS.format(
+            count=len(func_names),
+            function_names=func_name_lines
+        )
+        print(f"  Prompt 长度: {len(prompt)} 字符")
+        output = call_llm(prompt)
+        print(f"  AI 返回长度: {len(output)} 字符")
+
+        # 解析 AI 返回的表格
+        tables = extract_tables(output)
+        parsed = []
+        for table in tables:
+            parsed.extend(parse_markdown_table_to_dicts(table))
+        print(f"  -> 解析到 {len(parsed)} 个功能需求")
+
+        return {"func_summary_output": output, "parsed_func_summary": parsed}
+    except Exception as e:
+        print(f"  AI Agent3 调用失败: {e}")
+        return {"func_summary_output": f"调用失败: {str(e)}", "parsed_func_summary": []}
+
+
 def node_output(state: CosmicState) -> dict:
     """
-    节点5: 最终输出 — 打印到终端 + 导出 Excel
-    
-    输入: state.parsed_functions, state.parsed_cosmic
+    节点6: 最终输出 — 打印到终端 + 导出 Excel（含"所属功能需求"列）
+
+    输入: state.parsed_functions, state.parsed_cosmic, state.parsed_func_summary
     输出: 无（只做输出，不改状态）
-    
-    做三件事:
+
+    做四件事:
     1. 打印功能点列表
-    2. 打印完整的 COSMIC 子过程表格
-    3. 导出到 output/cosmic_result.xlsx
+    2. 打印功能需求总结表格
+    3. 打印完整的 COSMIC 子过程表格（含所属功能需求列）
+    4. 导出到 output/cosmic_result.xlsx
     """
     print("\n" + "=" * 60)
     print("处理完成!")
@@ -548,9 +638,11 @@ def node_output(state: CosmicState) -> dict:
 
     functions = state.get("parsed_functions", [])
     cosmic = state.get("parsed_cosmic", [])
+    summary = state.get("parsed_func_summary", [])
 
     print(f"\n原始功能点: {len(functions)} 个")
     print(f"COSMIC 子过程: {len(cosmic)} 个")
+    print(f"功能需求分类: {len(summary)} 个")
 
     # ---- 打印功能点列表 ----
     if functions:
@@ -558,20 +650,185 @@ def node_output(state: CosmicState) -> dict:
         for f in functions:
             print(f"  [{f.get('序号','?')}] {f.get('功能点名称','')}")
 
-    # ---- 打印 COSMIC 表格 ----
+    # ---- 打印功能需求总结表格 ----
+    if summary:
+        print("\n--- 功能需求总结 ---")
+        df_summary = pd.DataFrame(summary)
+        print(df_summary.to_string(index=False))
+
+    # ---- 构建"功能点名称 → 功能需求"映射字典 ----
+    # parsed_func_summary 格式: [{"功能需求": "数据接入", "包含的功能点名称": "名称1, 名称2, ..."}, ...]
+    func_to_requirement = {}  # {功能点名称: 功能需求名称}
+    for s in summary:
+        req_name = s.get("功能需求", "")
+        # 获取"包含的功能点名称"列（可能列名有差异）
+        included = s.get("包含的功能点名称", s.get("包含的功能点", ""))
+        if not included:
+            # 尝试其他可能的列名
+            for key in s:
+                if "功能点" in key and key != "功能需求":
+                    included = s[key]
+                    break
+        if req_name and included:
+            # 分割功能点名称（逗号分隔）
+            parts = [p.strip() for p in included.replace("，", ",").split(",")]
+            parts = [p for p in parts if p]
+            for p in parts:
+                func_to_requirement[p] = req_name
+
+    # ---- 打印 COSMIC 表格（含所属功能需求列） ----
     if cosmic:
-        print("\n--- COSMIC 子过程 ---")
+        print("\n--- COSMIC 子过程（含所属功能需求） ---")
         df = pd.DataFrame(cosmic)
+
+        # ---- 先将 AI 总结中的"包含的功能点名称"条目去首数字，构建精简索引 ----
+        # 这样 "8分客群满意度占比统计模块" 也能匹配 "8分客群满意度分布统计模块"
+        def strip_leading_digit(name: str) -> str:
+            return re.sub(r'^\d+', '', name)
+
+        # 构建模糊索引：key -> (原key, 功能需求)
+        # 索引所有可能的别名形式
+        fuzzy_index = []  # [(striped_key, original_key, req_name)]
+        for fn_key, req_val in func_to_requirement.items():
+            fuzzy_index.append((fn_key, fn_key, req_val))
+            stripped_k = strip_leading_digit(fn_key)
+            if stripped_k != fn_key:
+                fuzzy_index.append((stripped_k, fn_key, req_val))
+
+        def fuzzy_match(func_name: str) -> str:
+            """多级模糊匹配，返回功能需求名称或空字符串"""
+            # 0级：精确匹配
+            if func_name in func_to_requirement:
+                return func_to_requirement[func_name]
+
+            # 1级：去首数字后匹配
+            stripped = strip_leading_digit(func_name)
+            if stripped in func_to_requirement:
+                return func_to_requirement[stripped]
+
+            # 2级：遍历所有索引 key，用最长公共子串判断
+            # 先算出 COSMIC 表中的名称去首数字后的核心词
+            func_core = stripped  # 如 "分客群满意度分布统计模块"
+
+            best_match = ""
+            best_len = 0
+            for idx_key, orig_key, req_val in fuzzy_index:
+                idx_core = strip_leading_digit(idx_key) if idx_key != orig_key else idx_key
+                # 双向包含：一方含另一方（处理"占比" vs "分布"这类差异）
+                if idx_core in func_core or func_core in idx_core:
+                    match_len = max(len(idx_core), len(func_core))
+                    if match_len > best_len:
+                        best_len = match_len
+                        best_match = req_val
+                else:
+                    # 最长公共子串匹配（处理部分字不同的情况）
+                    # 如 "分客群满意度占比统计模块" vs "分客群满意度分布统计模块"
+                    # 只有1个字不同，公共子串维度很高
+                    shorter = min(len(idx_core), len(func_core))
+                    if shorter >= 6:  # 至少6个字长才算
+                        # 计算两字符串的公共字符比例（忽略顺序）
+                        common = len(set(idx_core) & set(func_core))
+                        ratio = common / len(set(func_core))
+                        if ratio >= 0.75:  # 公共字符比例 ≥ 75%
+                            if shorter > best_len:
+                                best_len = shorter
+                                best_match = req_val
+
+            if best_match:
+                return best_match
+
+            # 3级：子串匹配（更宽松）
+            # 取总结 key 中的核心词（去掉序号后），看是否在 func_name 中
+            func_lower = func_name.lower()
+            for idx_key, orig_key, req_val in fuzzy_index:
+                key_lower = idx_key.lower()
+                # 确保 key 至少有 4 个字以上避免误配
+                if len(key_lower) >= 4 and key_lower in func_lower:
+                    return req_val
+
+            return ""
+
+        # ---- 动态兜底：对于总结表中未出现的功能点，按关键词归类 ----
+        # 从已匹配的 func_to_requirement 提取关键词 → 功能需求的对应关系
+        # 这样 "集团系统报告上传" 即使总结表漏了，也能通过关键词匹配
+        keyword_to_req = {}  # {关键词: 功能需求名称}
+        for fn_key, req_val in func_to_requirement.items():
+            for keyword in fn_key.replace(",", "，").split("，"):
+                keyword = keyword.strip()
+                if len(keyword) >= 3:
+                    keyword_to_req[keyword] = req_val
+
+        # 对缺失的功能点按关键词归类
+        def fallback_match(func_name: str) -> str:
+            """兜底：从已匹配的功能点名称中找关键词匹配"""
+            for keyword, req_val in keyword_to_req.items():
+                if keyword in func_name or func_name in keyword:
+                    return req_val
+            # 再试：对功能点名称按常用业务关键词归类
+            business_keywords = {
+                "报告": "满意度报告自动化生成与管理",
+                "邮件": "满意度报告自动化生成与管理",
+                "地市级": "满意度报告自动化生成与管理",
+                "省级": "满意度报告自动化生成与管理",
+                "质检": "语音质检与工单闭环处理",
+                "录音": "语音质检与工单闭环处理",
+                "回访": "语音质检与工单闭环处理",
+                "投诉": "语音质检与工单闭环处理",
+                "工单": "语音质检与工单闭环处理",
+                "接入": "数据接入与外部系统对接",
+                "上传": "数据接入与外部系统对接",
+                "同步": "数据接入与外部系统对接",
+                "权限": "系统基础配置与权限控制",
+                "配置": "系统基础配置与权限控制",
+                "模板": "系统基础配置与权限控制",
+                "看板": "可视化监控与态势感知",
+                "态势": "可视化监控与态势感知",
+                "监控": "可视化监控与态势感知",
+                "展示": "可视化监控与态势感知",
+                "首页": "可视化监控与态势感知",
+                "刷新": "可视化监控与态势感知",
+                "诊断": "多维数据分析与诊断洞察",
+                "分析": "多维数据分析与诊断洞察",
+                "画像": "多维数据分析与诊断洞察",
+                "标签": "多维数据分析与诊断洞察",
+                "识别": "多维数据分析与诊断洞察",
+                "关联": "多维数据分析与诊断洞察",
+                "根因": "多维数据分析与诊断洞察",
+                "引擎": "多维数据分析与诊断洞察",
+            }
+            for kw, req_val in business_keywords.items():
+                if kw in func_name:
+                    return req_val
+            return ""
+
+        req_column = []
+        missing_names = set()
+        for _, row in df.iterrows():
+            func_name = row.get("功能点名称", "")
+            req = fuzzy_match(func_name)
+            if not req:
+                req = fallback_match(func_name)
+            if not req:
+                missing_names.add(func_name)
+            req_column.append(req)
+
+        if missing_names:
+            print(f"\n  [警告] {len(missing_names)} 个功能点未能匹配到功能需求:")
+            for n in sorted(missing_names):
+                print(f"    - {n}")
+
+        df["所属功能需求"] = req_column
         print(df.to_string(index=False))
 
         # ---- 导出 Excel ---
-        # 路径: cosmic-langgraph/output/cosmic_result.xlsx
-        # 每次运行会覆盖这个文件
         output_dir = Path("output")
-        output_dir.mkdir(exist_ok=True)  # 如果 output 文件夹不存在，自动创建
+        output_dir.mkdir(exist_ok=True)
         excel_path = output_dir / "cosmic_result.xlsx"
         df.to_excel(excel_path, index=False, sheet_name='COSMIC子过程')
         print(f"\nExcel 已导出: {excel_path.resolve()}")
+        print(f"  行数: {len(df)}")
+        print(f"  列数: {len(df.columns)}")
+        print(f"  新增列: 所属功能需求")
 
     return state
 
@@ -585,34 +842,37 @@ def node_output(state: CosmicState) -> dict:
 def build_cosmic_graph() -> StateGraph:
     """
     构建 COSMIC 分解工作流图。
-    
+
     图的结构:
-    extract_functions → parse_functions → cosmic_decompose → parse_cosmic → output_results → END
-    
+    extract_functions → parse_functions → cosmic_decompose → parse_cosmic
+    → summarize_requirements → output_results → END
+
     这是一个单纯的"流水线"（pipeline），没有条件分支（if/else）或循环。
     LangGraph 支持更复杂的图（循环、条件分支、并行），但这个工作流用
     线性 pipeline 就够了。
-    
+
     返回:
         一个可编译的 StateGraph 对象
     """
     builder = StateGraph(CosmicState)
-    
+
     # 注册节点
-    builder.add_node("extract_functions", node_extract_functions)  # 第1步: AI提取功能点
-    builder.add_node("parse_functions", node_parse_functions)      # 第2步: 解析表格
-    builder.add_node("cosmic_decompose", node_cosmic_decompose)    # 第3步: AI作COSMIC分解
-    builder.add_node("parse_cosmic", node_parse_cosmic)            # 第4步: 解析表格
-    builder.add_node("output_results", node_output)                # 第5步: 输出结果
-    
+    builder.add_node("extract_functions", node_extract_functions)        # 第1步: AI提取功能点
+    builder.add_node("parse_functions", node_parse_functions)            # 第2步: 解析表格
+    builder.add_node("cosmic_decompose", node_cosmic_decompose)          # 第3步: AI作COSMIC分解
+    builder.add_node("parse_cosmic", node_parse_cosmic)                  # 第4步: 解析表格
+    builder.add_node("summarize_requirements", node_summarize_function_names)  # 第5步: AI总结功能需求
+    builder.add_node("output_results", node_output)                      # 第6步: 输出结果
+
     # 设置入口点和边
     builder.set_entry_point("extract_functions")
-    builder.add_edge("extract_functions", "parse_functions")       # 第1步→第2步
-    builder.add_edge("parse_functions", "cosmic_decompose")        # 第2步→第3步
-    builder.add_edge("cosmic_decompose", "parse_cosmic")           # 第3步→第4步
-    builder.add_edge("parse_cosmic", "output_results")             # 第4步→第5步
-    builder.add_edge("output_results", END)                        # 第5步→结束
-    
+    builder.add_edge("extract_functions", "parse_functions")             # 第1步→第2步
+    builder.add_edge("parse_functions", "cosmic_decompose")              # 第2步→第3步
+    builder.add_edge("cosmic_decompose", "parse_cosmic")                 # 第3步→第4步
+    builder.add_edge("parse_cosmic", "summarize_requirements")           # 第4步→第5步
+    builder.add_edge("summarize_requirements", "output_results")         # 第5步→第6步
+    builder.add_edge("output_results", END)                              # 第6步→结束
+
     return builder
 
 
@@ -639,10 +899,12 @@ def run_once(user_input: str) -> dict:
         "parsed_functions": [],
         "cosmic_output": "",
         "parsed_cosmic": [],
+        "func_summary_output": "",
+        "parsed_func_summary": [],
         "error": None,
     }
-    
-    # 执行整个图（自动跑 5 个节点）
+
+    # 执行整个图（自动跑 6 个节点）
     return graph.invoke(initial_state)
 
 
@@ -670,27 +932,43 @@ def run_interactive():
 
     while True:
         try:
-            # ---- 收集输入（支持多行粘贴） ----
+            # ---- 收集输入（支持多行粘贴，允许中间有空行段落） ----
+            # 结束标志：连续按两次 Enter（产生一个空行）
+            # 如果粘贴内容本身有段落空行，连续按三次 Enter 结束
             print("-" * 40)
             lines = []
+            empty_line_count = 0
+            first_line_skipped = False
             while True:
-                line = input()
-                if not line and lines:
-                    # 空行表示结束输入
+                try:
+                    line = input()
+                except EOFError:
+                    # Windows git-bash: Ctrl+Z + Enter 触发 EOF
                     break
-                if not line and not lines:
-                    # 第一行就是空行，忽略
-                    continue
-                lines.append(line)
-                # 单行输入（没有继续输入的意思），直接结束
-                # 如果输入完所有行后停了 0.5 秒没新行，通常意味着粘贴完毕
-                # 这里简化处理：用户可以直接按两次 Enter 结束
+                if not line:
+                    if not first_line_skipped:
+                        # 第一行就是空行，忽略（跳过开头的空行）
+                        continue
+                    empty_line_count += 1
+                    if empty_line_count >= 2:
+                        # 连续两个空行 → 结束输入
+                        break
+                    # 第一个空行保留（段落之间的分隔符）
+                    lines.append("")
+                else:
+                    first_line_skipped = True
+                    empty_line_count = 0  # 非空行重置计数
+                    lines.append(line)
+
+            # 去掉结尾多余的空行
+            while lines and lines[-1] == "":
+                lines.pop()
 
             user_input = "\n".join(lines).strip()
 
             # ---- 对单行输入的兼容处理 ----
-            # 如果用户习惯一行输入（不按空行结束），也接受
-            if not user_input and len(lines) == 1:
+            # 如果用户只输入了一行（然后按了两次 Enter 结束），也接受
+            if not user_input and lines:
                 user_input = lines[0].strip()
 
             if not user_input:
