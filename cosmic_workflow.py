@@ -119,11 +119,12 @@ PROMPT_COSMIC_DECOMPOSE = """{序号}{功能点名称} :{功能点描述} .
 要求：
 1. 第一子过程必须是 E，最后一个子过程必须是 W 或 X
 2. 子功能过程个数 4 到 6 个
-3. 禁止使用以下词语：临时表、缓存表、redis、界面、改造、新增表字段、日志、操作记录、标题、公告、确认、下一页、上一页、配置、接口调用、数据计算、逻辑计算、排序、大小写转换、格式转换、读取格式、解析、封装、美化布局、调整字体大小、记录不存在信息、调用失败操作日志、路径信息的渲染
-4. 每行子过程描述使用 1 到 2 个高级名词组成完整的动宾结构
-5. E -> 动词使用"输入"；R -> 动词使用"读取"；W -> 动词使用"保存"；X -> 动词使用"输出"
-6. 每个子过程数据组名字各不相同，数据属性 4 到 6 个
-7. 子过程描述避免重复，描述长度不等
+3. 【重要】每个功能点分解出的子过程中，各种数据移动类型次数限制：E 只能出现 1 次，R ≤ 2，W ≤ 2，X ≤ 2。例如 E→R→W→X→R→W 是允许的（R=2,W=2,X=1,E=1），但 E→R→W→X→R→R 就不允许（R=3 超过上限）。
+4. 禁止使用以下词语：临时表、缓存表、redis、界面、改造、新增表字段、日志、操作记录、标题、公告、确认、下一页、上一页、配置、接口调用、数据计算、逻辑计算、排序、大小写转换、格式转换、读取格式、解析、封装、美化布局、调整字体大小、记录不存在信息、调用失败操作日志、路径信息的渲染
+5. 每行子过程描述使用 1 到 2 个高级名词组成完整的动宾结构
+6. E -> 动词使用"输入"；R -> 动词使用"读取"；W -> 动词使用"保存"；X -> 动词使用"输出"
+7. 每个子过程数据组名字各不相同，数据属性 4 到 6 个
+8. 子过程描述避免重复，描述长度不等
 
 表头：|序号|功能点名称|触发事件|子过程描述|数据移动类型|数据组|数据属性|
 注意每个字段输出都不要为空，触发事件每个功能点之间最好不同，所有字段以中文输出。
@@ -820,10 +821,12 @@ def node_output(state: CosmicState) -> dict:
         df["所属功能需求"] = req_column
         print(df.to_string(index=False))
 
-        # ---- 导出 Excel ---
+        # ---- 导出 Excel（以时间命名，避免占用冲突） ---
         output_dir = Path("output")
         output_dir.mkdir(exist_ok=True)
-        excel_path = output_dir / "cosmic_result.xlsx"
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        excel_path = output_dir / f"cosmic_result_{timestamp}.xlsx"
         df.to_excel(excel_path, index=False, sheet_name='COSMIC子过程')
         print(f"\nExcel 已导出: {excel_path.resolve()}")
         print(f"  行数: {len(df)}")
